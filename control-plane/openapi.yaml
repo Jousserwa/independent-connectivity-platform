@@ -1,0 +1,230 @@
+openapi: 3.1.0
+info:
+  title: Independent Connectivity Platform Control Plane
+  version: 0.1.0
+  description: >
+    Initial API contract for the authorized single-gateway prototype.
+    This specification is a design artifact; no deployed API is claimed.
+servers:
+  - url: https://api.example.invalid
+    description: Placeholder only; replace after an approved deployment.
+security:
+  - bearerAuth: []
+paths:
+  /v1/devices/enroll:
+    post:
+      summary: Enroll a device public key
+      description: The device generates its own WireGuard key pair. The private key must never be sent to this API.
+      security:
+        - enrollmentToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_public_key, platform]
+              properties:
+                device_public_key:
+                  type: string
+                  description: Base64-encoded WireGuard public key only.
+                platform:
+                  type: string
+                  enum: [android]
+                app_version:
+                  type: string
+      responses:
+        "201":
+          description: Device enrolled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device_id, status]
+                properties:
+                  device_id:
+                    type: string
+                  status:
+                    type: string
+                    enum: [pending, active]
+        "400":
+          description: Invalid public key or request
+        "401":
+          description: Invalid or expired enrollment token
+  /v1/gateways:
+    get:
+      summary: List eligible registered gateways
+      responses:
+        "200":
+          description: Eligible gateways
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [gateways]
+                properties:
+                  gateways:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Gateway'
+        "401":
+          description: Authentication required
+  /v1/entitlements/activate:
+    post:
+      summary: Activate a test or purchased time-based entitlement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [activation_code, device_id]
+              properties:
+                activation_code:
+                  type: string
+                device_id:
+                  type: string
+      responses:
+        "200":
+          description: Entitlement activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Entitlement'
+        "400":
+          description: Invalid, already redeemed, or ineligible activation code
+        "401":
+          description: Authentication required
+  /v1/tunnel/config:
+    post:
+      summary: Request tunnel peer configuration for an eligible gateway
+      description: >
+        The client submits its public key and selected gateway. The response contains
+        server public configuration only. Never return or request a client private key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_id, gateway_id, device_public_key]
+              properties:
+                device_id:
+                  type: string
+                gateway_id:
+                  type: string
+                device_public_key:
+                  type: string
+      responses:
+        "200":
+          description: Authorized tunnel configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TunnelConfig'
+        "403":
+          description: Device or entitlement is not authorized
+        "404":
+          description: Gateway not found or unavailable
+  /v1/devices/{device_id}/revoke:
+    post:
+      summary: Revoke a device
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Revocation accepted
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+  /v1/health:
+    get:
+      summary: Control plane liveness
+      security: []
+      responses:
+        "200":
+          description: Service is alive
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+    enrollmentToken:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+  schemas:
+    Gateway:
+      type: object
+      additionalProperties: false
+      required: [gateway_id, display_name, region, status]
+      properties:
+        gateway_id:
+          type: string
+        display_name:
+          type: string
+        region:
+          type: string
+          description: Coarse service region; do not expose private host location.
+        status:
+          type: string
+          enum: [healthy, degraded, unavailable]
+        endpoint:
+          type: string
+          description: Public WireGuard endpoint, returned only for eligible gateways.
+        capacity_state:
+          type: string
+          enum: [available, limited, full]
+    Entitlement:
+      type: object
+      additionalProperties: false
+      required: [entitlement_id, status, starts_at, expires_at]
+      properties:
+        entitlement_id:
+          type: string
+        status:
+          type: string
+          enum: [active, expired, revoked]
+        starts_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    TunnelConfig:
+      type: object
+      additionalProperties: false
+      required: [gateway_id, endpoint, server_public_key, assigned_address, allowed_ips, expires_at]
+      properties:
+        gateway_id:
+          type: string
+        endpoint:
+          type: string
+        server_public_key:
+          type: string
+        assigned_address:
+          type: string
+        allowed_ips:
+          type: array
+          items:
+            type: string
+        dns_servers:
+          type: array
+          items:
+            type: string
+        persistent_keepalive_seconds:
+          type: integer
+          minimum: 0
+          maximum: 65535
+        expires_at:
+          type: string
+          format: date-time
