@@ -32,3 +32,6 @@ id_ed25519
 coverage/
 .cache/
 tmp/
+
+__pycache__/
+*.py[cod]
