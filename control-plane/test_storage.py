@@ -187,5 +187,25 @@ class SQLiteStoreTests(unittest.TestCase):
         self.assertTrue(self.store.get_device("dev_test").revoked)
 
 
+    def test_revoked_entitlement_cannot_be_overwritten(self):
+        self.store.save_device(self.device)
+        start = datetime.now(timezone.utc)
+        entitlement = Entitlement(
+            "ent_immutable",
+            "dev_test",
+            start,
+            start + timedelta(hours=24),
+        )
+        self.store.save_entitlement(entitlement)
+        self.store.revoke_device("dev_test")
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.save_entitlement(entitlement)
+
+        saved = self.store.get_entitlements("dev_test")
+        self.assertEqual(len(saved), 1)
+        self.assertTrue(saved[0].revoked)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -248,19 +248,19 @@ class SQLiteStore:
             return int(row["duration_hours"])
 
     def save_entitlement(self, entitlement: Entitlement):
+        """Insert an entitlement; never overwrite its identity or revocation state."""
         with self._connect() as db:
             db.execute(
                 """INSERT INTO entitlements
                    (entitlement_id, device_id, starts_at, expires_at, revoked)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(entitlement_id) DO UPDATE SET
-                   starts_at=excluded.starts_at,
-                   expires_at=excluded.expires_at,
-                   revoked=excluded.revoked""",
-                (entitlement.entitlement_id, entitlement.device_id,
-                 _timestamp(entitlement.starts_at),
-                 _timestamp(entitlement.expires_at),
-                 int(entitlement.revoked)),
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    entitlement.entitlement_id,
+                    entitlement.device_id,
+                    _timestamp(entitlement.starts_at),
+                    _timestamp(entitlement.expires_at),
+                    int(entitlement.revoked),
+                ),
             )
 
     def get_entitlements(self, device_id: str):
