@@ -51,9 +51,13 @@ documentation/       Product, deployment, privacy, and operations documents
 
 No later gate should be treated as complete until its tests and evidence are recorded.
 
+## Development budget
+
+The initial recurring infrastructure budget is currently **USD $0/month**. Development will proceed locally using existing equipment and free tooling. No paid server, domain, API, or subscription may be provisioned without explicit approval. See [ZERO_COST_DEVELOPMENT_PLAN.md](documentation/ZERO_COST_DEVELOPMENT_PLAN.md).
+
 ## Current status
 
-The repository is at foundation stage. No production service, Android app, gateway, carrier partnership, or free-internet capability is claimed to exist yet.
+The repository is at foundation/specification stage. No production service, Android app, gateway, carrier partnership, or free-internet capability is claimed to exist yet.
 
 ## Contributing
 
