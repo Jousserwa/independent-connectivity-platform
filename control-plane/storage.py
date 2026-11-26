@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import secrets
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -83,17 +84,18 @@ class SQLiteStore:
             """)
 
     def save_device(self, device: Device):
+        """Insert a new device; never overwrite an existing identity."""
         with self._connect() as db:
             db.execute(
                 """INSERT INTO devices
                    (device_id, public_key, platform, revoked)
-                   VALUES (?, ?, ?, ?)
-                   ON CONFLICT(device_id) DO UPDATE SET
-                   public_key=excluded.public_key,
-                   platform=excluded.platform,
-                   revoked=excluded.revoked""",
-                (device.device_id, device.public_key,
-                 device.platform, int(device.revoked)),
+                   VALUES (?, ?, ?, ?)""",
+                (
+                    device.device_id,
+                    device.public_key,
+                    device.platform,
+                    int(device.revoked),
+                ),
             )
 
     def get_device(self, device_id: str) -> Optional[Device]:
@@ -106,6 +108,88 @@ class SQLiteStore:
             return None
         return Device(row["device_id"], row["public_key"],
                       row["platform"], bool(row["revoked"]))
+
+    def get_device_by_public_key(self, public_key: str):
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM devices WHERE public_key=?",
+                (public_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return Device(
+            row["device_id"],
+            row["public_key"],
+            row["platform"],
+            bool(row["revoked"]),
+        )
+
+    def activate_code_for_device(
+        self,
+        code: str,
+        device_id: str,
+        now: Optional[datetime] = None,
+    ) -> Entitlement:
+        """Redeem a code and create its entitlement atomically."""
+        starts = now or datetime.now(timezone.utc)
+        if starts.tzinfo is None:
+            raise ValueError("timestamps must be timezone-aware")
+        starts = starts.astimezone(timezone.utc)
+
+        digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+
+            device = db.execute(
+                "SELECT revoked FROM devices WHERE device_id=?",
+                (device_id,),
+            ).fetchone()
+
+            if device is None or device["revoked"]:
+                raise ValueError("device is not eligible")
+
+            activation = db.execute(
+                """SELECT duration_hours FROM activation_codes
+                   WHERE code_hash=? AND redeemed=0""",
+                (digest,),
+            ).fetchone()
+
+            if activation is None:
+                raise ValueError(
+                    "activation code is invalid or already redeemed"
+                )
+
+            updated = db.execute(
+                """UPDATE activation_codes SET redeemed=1
+                   WHERE code_hash=? AND redeemed=0""",
+                (digest,),
+            )
+
+            if updated.rowcount != 1:
+                raise ValueError("activation code was already redeemed")
+
+            duration = int(activation["duration_hours"])
+            entitlement = Entitlement(
+                entitlement_id="ent_" + secrets.token_urlsafe(12),
+                device_id=device_id,
+                starts_at=starts,
+                expires_at=starts + timedelta(hours=duration),
+            )
+
+            db.execute(
+                """INSERT INTO entitlements
+                   (entitlement_id, device_id, starts_at, expires_at, revoked)
+                   VALUES (?, ?, ?, ?, 0)""",
+                (
+                    entitlement.entitlement_id,
+                    entitlement.device_id,
+                    _timestamp(entitlement.starts_at),
+                    _timestamp(entitlement.expires_at),
+                ),
+            )
+
+            return entitlement
 
     def save_gateway(self, gateway: Gateway):
         with self._connect() as db:
