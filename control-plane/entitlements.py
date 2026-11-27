@@ -115,7 +115,7 @@ class LocalControlPlane:
         ]
 
     def issue_test_activation_code(self, duration_hours: int) -> str:
-        if duration_hours not in ALLOWED_PASS_HOURS:
+        if type(duration_hours) is not int or duration_hours not in ALLOWED_PASS_HOURS:
             raise ValueError("only 24, 72, or 168 hour test passes are allowed")
         code = secrets.token_urlsafe(24)
         self.activation_codes[code] = duration_hours

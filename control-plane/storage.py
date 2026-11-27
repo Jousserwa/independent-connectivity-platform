@@ -81,6 +81,15 @@ class SQLiteStore:
                     expires_at TEXT NOT NULL,
                     revoked INTEGER NOT NULL DEFAULT 0
                 );
+
+                CREATE TABLE IF NOT EXISTS device_tokens (
+                    token_hash TEXT PRIMARY KEY,
+                    device_id TEXT NOT NULL REFERENCES devices(device_id),
+                    revoked INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_device_tokens_device
+                ON device_tokens(device_id);
             """)
 
     def save_device(self, device: Device):
@@ -97,6 +106,54 @@ class SQLiteStore:
                     int(device.revoked),
                 ),
             )
+
+    def save_device_with_token(self, device: Device, token_hash: str):
+        """Atomically insert a device and its hashed authentication token."""
+        if not token_hash:
+            raise ValueError("token hash is required")
+
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                """INSERT INTO devices
+                   (device_id, public_key, platform, revoked)
+                   VALUES (?, ?, ?, ?)""",
+                (
+                    device.device_id,
+                    device.public_key,
+                    device.platform,
+                    int(device.revoked),
+                ),
+            )
+            db.execute(
+                """INSERT INTO device_tokens
+                   (token_hash, device_id, revoked)
+                   VALUES (?, ?, 0)""",
+                (token_hash, device.device_id),
+            )
+
+    def get_device_for_token_hash(self, token_hash: str):
+        """Return the device only when its token and device remain active."""
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT d.*
+                   FROM device_tokens t
+                   JOIN devices d ON d.device_id = t.device_id
+                   WHERE t.token_hash = ?
+                     AND t.revoked = 0
+                     AND d.revoked = 0""",
+                (token_hash,),
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return Device(
+            row["device_id"],
+            row["public_key"],
+            row["platform"],
+            bool(row["revoked"]),
+        )
 
     def get_device(self, device_id: str) -> Optional[Device]:
         with self._connect() as db:
@@ -221,7 +278,7 @@ class SQLiteStore:
         ]
 
     def save_activation_code(self, code: str, duration_hours: int):
-        if duration_hours not in {24, 72, 168}:
+        if type(duration_hours) is not int or duration_hours not in {24, 72, 168}:
             raise ValueError("unsupported pass duration")
         digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
         with self._connect() as db:
@@ -288,5 +345,9 @@ class SQLiteStore:
                 raise ValueError("unknown device")
             db.execute(
                 "UPDATE entitlements SET revoked=1 WHERE device_id=?",
+                (device_id,),
+            )
+            db.execute(
+                "UPDATE device_tokens SET revoked=1 WHERE device_id=?",
                 (device_id,),
             )

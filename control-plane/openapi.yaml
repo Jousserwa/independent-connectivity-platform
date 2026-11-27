@@ -1,20 +1,40 @@
 openapi: 3.1.0
 info:
   title: Independent Connectivity Platform Control Plane
-  version: 0.1.0
+  version: 0.2.0
   description: >
-    Initial API contract for the authorized single-gateway prototype.
-    This specification is a design artifact; no deployed API is claimed.
+    Local-first API contract for the authorized connectivity prototype.
+    This specification does not imply a deployed API or operational gateway.
+
 servers:
-  - url: https://api.example.invalid
-    description: Placeholder only; replace after an approved deployment.
-security:
-  - bearerAuth: []
+  - url: http://127.0.0.1:8765
+    description: Local development only.
+
 paths:
+  /v1/health:
+    get:
+      summary: Public service health check
+      security: []
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
   /v1/devices/enroll:
     post:
-      summary: Enroll a device public key
-      description: The device generates its own WireGuard key pair. The private key must never be sent to this API.
+      summary: Enroll an Android device
+      description: >
+        The device generates its own WireGuard key pair.
+        Only its public key is submitted. The returned device token
+        is shown once and must be stored securely by the client.
       security:
         - enrollmentToken: []
       requestBody:
@@ -36,25 +56,39 @@ paths:
                   type: string
       responses:
         "201":
-          description: Device enrolled
+          description: Device enrolled; token returned once.
           content:
             application/json:
               schema:
                 type: object
-                required: [device_id, status]
+                required: [device_id, device_token, status]
                 properties:
                   device_id:
                     type: string
+                  device_token:
+                    type: string
+                    description: Secret bearer token; store securely.
                   status:
                     type: string
-                    enum: [pending, active]
+                    enum: [enrolled]
         "400":
-          description: Invalid public key or request
+          description: Invalid request or public key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         "401":
-          description: Invalid or expired enrollment token
+          description: Invalid enrollment token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1/gateways:
     get:
       summary: List eligible registered gateways
+      security:
+        - deviceAuth: []
       responses:
         "200":
           description: Eligible gateways
@@ -69,10 +103,45 @@ paths:
                     items:
                       $ref: '#/components/schemas/Gateway'
         "401":
-          description: Authentication required
+          description: Device authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/entitlements:
+    get:
+      summary: List the authenticated device's entitlements
+      security:
+        - deviceAuth: []
+      responses:
+        "200":
+          description: Device entitlements
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entitlements]
+                properties:
+                  entitlements:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Entitlement'
+        "401":
+          description: Device authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1/entitlements/activate:
     post:
-      summary: Activate a test or purchased time-based entitlement
+      summary: Activate a time-based pass
+      description: >
+        Device identity is derived from the bearer token.
+        The request must not contain a device_id.
+      security:
+        - deviceAuth: []
       requestBody:
         required: true
         content:
@@ -80,11 +149,9 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [activation_code, device_id]
+              required: [activation_code]
               properties:
                 activation_code:
-                  type: string
-                device_id:
                   type: string
       responses:
         "200":
@@ -94,15 +161,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/Entitlement'
         "400":
-          description: Invalid, already redeemed, or ineligible activation code
+          description: Invalid, redeemed, or ineligible activation code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         "401":
-          description: Authentication required
-  /v1/tunnel/config:
+          description: Device authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/admin/activation-codes:
     post:
-      summary: Request tunnel peer configuration for an eligible gateway
-      description: >
-        The client submits its public key and selected gateway. The response contains
-        server public configuration only. Never return or request a client private key.
+      summary: Issue a development activation code
+      security:
+        - adminAuth: []
       requestBody:
         required: true
         content:
@@ -110,28 +185,59 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [device_id, gateway_id, device_public_key]
+              required: [duration_hours]
               properties:
-                device_id:
-                  type: string
-                gateway_id:
-                  type: string
-                device_public_key:
-                  type: string
+                duration_hours:
+                  type: integer
+                  enum: [24, 72, 168]
       responses:
-        "200":
-          description: Authorized tunnel configuration
+        "201":
+          description: Code issued; shown once
+        "400":
+          description: Unsupported duration
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TunnelConfig'
+                $ref: '#/components/schemas/Error'
         "403":
-          description: Device or entitlement is not authorized
-        "404":
-          description: Gateway not found or unavailable
-  /v1/devices/{device_id}/revoke:
+          description: Admin permission required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/admin/gateways:
     post:
-      summary: Revoke a device
+      summary: Register or update a gateway
+      security:
+        - adminAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GatewayRegistration'
+      responses:
+        "201":
+          description: Gateway registered
+        "400":
+          description: Invalid gateway details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "403":
+          description: Admin permission required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/admin/devices/{device_id}/revoke:
+    post:
+      summary: Revoke a device and its credentials
+      security:
+        - adminAuth: []
       parameters:
         - name: device_id
           in: path
@@ -140,21 +246,27 @@ paths:
             type: string
       responses:
         "202":
-          description: Revocation accepted
-        "401":
-          description: Authentication required
+          description: Device revoked
+        "400":
+          description: Unknown device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         "403":
-          description: Insufficient permission
-  /v1/health:
-    get:
-      summary: Control plane liveness
-      security: []
-      responses:
-        "200":
-          description: Service is alive
+          description: Admin permission required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   securitySchemes:
-    bearerAuth:
+    deviceAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+    adminAuth:
       type: http
       scheme: bearer
       bearerFormat: opaque
@@ -162,11 +274,25 @@ components:
       type: http
       scheme: bearer
       bearerFormat: opaque
+
   schemas:
-    Gateway:
+    Error:
       type: object
       additionalProperties: false
-      required: [gateway_id, display_name, region, status]
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    Gateway:
+      type: object
+      required:
+        - gateway_id
+        - display_name
+        - region
+        - status
+        - endpoint
+        - capacity_state
       properties:
         gateway_id:
           type: string
@@ -174,57 +300,62 @@ components:
           type: string
         region:
           type: string
-          description: Coarse service region; do not expose private host location.
+          description: Coarse service region, not private host location.
         status:
           type: string
           enum: [healthy, degraded, unavailable]
         endpoint:
           type: string
-          description: Public WireGuard endpoint, returned only for eligible gateways.
         capacity_state:
           type: string
           enum: [available, limited, full]
-    Entitlement:
+
+    GatewayRegistration:
       type: object
       additionalProperties: false
-      required: [entitlement_id, status, starts_at, expires_at]
-      properties:
-        entitlement_id:
-          type: string
-        status:
-          type: string
-          enum: [active, expired, revoked]
-        starts_at:
-          type: string
-          format: date-time
-        expires_at:
-          type: string
-          format: date-time
-    TunnelConfig:
-      type: object
-      additionalProperties: false
-      required: [gateway_id, endpoint, server_public_key, assigned_address, allowed_ips, expires_at]
+      required:
+        - gateway_id
+        - display_name
+        - region
+        - endpoint
+        - server_public_key
+        - status
+        - capacity_state
       properties:
         gateway_id:
+          type: string
+        display_name:
+          type: string
+        region:
           type: string
         endpoint:
           type: string
         server_public_key:
           type: string
-        assigned_address:
+          description: Base64-encoded WireGuard server public key.
+        status:
           type: string
-        allowed_ips:
-          type: array
-          items:
-            type: string
-        dns_servers:
-          type: array
-          items:
-            type: string
-        persistent_keepalive_seconds:
-          type: integer
-          minimum: 0
-          maximum: 65535
+          enum: [healthy, degraded, unavailable]
+        capacity_state:
+          type: string
+          enum: [available, limited, full]
+
+    Entitlement:
+      type: object
+      required:
+        - entitlement_id
+        - status
+        - starts_at
+        - expires_at
+      properties:
+        entitlement_id:
+          type: string
+        status:
+          type: string
+          enum: [active, pending, expired, revoked]
+        starts_at:
+          type: string
+          format: date-time
         expires_at:
           type: string
           format: date-time

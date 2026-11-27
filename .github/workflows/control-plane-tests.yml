@@ -27,3 +27,16 @@ jobs:
       - name: Run dependency-free unit tests
         working-directory: control-plane
         run: python -m unittest -v
+  openapi-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install OpenAPI validator
+        run: python -m pip install openapi-spec-validator==0.7.2
+      - name: Validate OpenAPI 3.1 contract
+        run: openapi-spec-validator control-plane/openapi.yaml

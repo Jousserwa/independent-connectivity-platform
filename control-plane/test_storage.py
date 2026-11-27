@@ -34,8 +34,13 @@ class SQLiteStoreTests(unittest.TestCase):
         self.assertIsNone(self.store.redeem_activation_code("test-code"))
 
     def test_activation_code_restrictions(self):
-        with self.assertRaises(ValueError):
-            self.store.save_activation_code("bad-code", 48)
+        invalid_durations = (48, 24.0, True, "24")
+        for index, hours in enumerate(invalid_durations):
+            with self.subTest(hours=hours):
+                with self.assertRaises(ValueError):
+                    self.store.save_activation_code(
+                        f"bad-code-{index}", hours
+                    )
 
     def test_gateway_filtering(self):
         key = base64.b64encode(bytes([2]) * 32).decode()
@@ -205,6 +210,56 @@ class SQLiteStoreTests(unittest.TestCase):
         saved = self.store.get_entitlements("dev_test")
         self.assertEqual(len(saved), 1)
         self.assertTrue(saved[0].revoked)
+
+
+    def test_device_token_authentication_survives_restart(self):
+        import hashlib
+
+        self.store.save_device_with_token(
+            self.device,
+            hashlib.sha256(b"test-secret").hexdigest(),
+        )
+
+        restarted = SQLiteStore(self.db_path)
+        found = restarted.get_device_for_token_hash(
+            hashlib.sha256(b"test-secret").hexdigest()
+        )
+
+        self.assertEqual(found, self.device)
+
+    def test_unknown_device_token_is_rejected(self):
+        self.assertIsNone(
+            self.store.get_device_for_token_hash("unknown-hash")
+        )
+
+    def test_device_revocation_invalidates_token(self):
+        import hashlib
+
+        token_hash = hashlib.sha256(b"revoke-secret").hexdigest()
+        self.store.save_device_with_token(self.device, token_hash)
+
+        self.store.revoke_device(self.device.device_id)
+
+        self.assertIsNone(
+            self.store.get_device_for_token_hash(token_hash)
+        )
+
+    def test_raw_device_token_is_not_stored(self):
+        import hashlib
+
+        raw_token = "this-is-a-test-only-secret"
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+
+        self.store.save_device_with_token(self.device, token_hash)
+
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT token_hash FROM device_tokens WHERE device_id=?",
+                (self.device.device_id,),
+            ).fetchone()
+
+        self.assertEqual(row["token_hash"], token_hash)
+        self.assertNotEqual(row["token_hash"], raw_token)
 
 
 if __name__ == "__main__":

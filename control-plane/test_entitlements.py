@@ -55,7 +55,7 @@ class ControlPlaneRulesTests(unittest.TestCase):
             self.cp.activate_pass(code, self.device.device_id, self.now)
 
     def test_only_supported_durations_are_issued(self):
-        for hours in (1, 12, 48, 720):
+        for hours in (1, 12, 48, 720, 24.0, True, "24"):
             with self.assertRaises(ValueError):
                 self.cp.issue_test_activation_code(hours)
 

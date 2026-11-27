@@ -27,6 +27,26 @@ class PersistentControlPlaneTests(unittest.TestCase):
     def restart(self):
         return PersistentControlPlane(SQLiteStore(self.db_path))
 
+    def test_device_token_authentication_survives_restart(self):
+        device, token = self.control.enroll_device_with_token(make_key(11))
+        restarted = self.restart()
+        self.assertEqual(restarted.authenticate_device(token), device)
+
+    def test_unknown_device_token_is_rejected(self):
+        self.assertIsNone(
+            self.control.authenticate_device("unknown-token")
+        )
+
+    def test_device_revocation_invalidates_token(self):
+        device, token = self.control.enroll_device_with_token(make_key(12))
+        self.control.revoke_device(device.device_id)
+        self.assertIsNone(self.control.authenticate_device(token))
+
+    def test_token_enrollment_rejects_duplicate_public_key(self):
+        self.control.enroll_device_with_token(make_key(13))
+        with self.assertRaises(ValueError):
+            self.control.enroll_device_with_token(make_key(13))
+
     def test_device_enrollment_survives_restart(self):
         device = self.control.enroll_device(make_key(1))
         restarted = self.restart()
@@ -80,7 +100,7 @@ class PersistentControlPlaneTests(unittest.TestCase):
         for hours in (24, 72, 168):
             self.control.issue_test_activation_code(hours)
 
-        for hours in (1, 48, 96, 240):
+        for hours in (1, 48, 96, 240, 24.0, True, "24"):
             with self.assertRaises(ValueError):
                 self.control.issue_test_activation_code(hours)
 

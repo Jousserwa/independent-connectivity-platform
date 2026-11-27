@@ -5,6 +5,7 @@ This is not yet a deployed API or production network service.
 from __future__ import annotations
 
 import secrets
+import hashlib
 import sqlite3
 from datetime import datetime
 from typing import Optional
@@ -53,6 +54,39 @@ class PersistentControlPlane:
 
         return device
 
+    def enroll_device_with_token(
+        self,
+        public_key: str,
+        platform: str = "android",
+    ) -> tuple[Device, str]:
+        if platform != "android":
+            raise ValueError("unsupported platform")
+        if not validate_wireguard_public_key(public_key):
+            raise ValueError("invalid WireGuard public key")
+        if self.store.get_device_by_public_key(public_key) is not None:
+            raise ValueError("public key already enrolled")
+
+        device = Device(
+            device_id="dev_" + secrets.token_urlsafe(12),
+            public_key=public_key,
+            platform=platform,
+        )
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+        try:
+            self.store.save_device_with_token(device, token_hash)
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("public key or device already enrolled") from exc
+
+        return device, raw_token
+
+    def authenticate_device(self, raw_token: str) -> Optional[Device]:
+        if not isinstance(raw_token, str) or not raw_token:
+            return None
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        return self.store.get_device_for_token_hash(token_hash)
+
     def get_device(self, device_id: str):
         return self.store.get_device(device_id)
 
@@ -79,7 +113,7 @@ class PersistentControlPlane:
         return self.store.eligible_gateways()
 
     def issue_test_activation_code(self, duration_hours: int) -> str:
-        if duration_hours not in ALLOWED_PASS_HOURS:
+        if type(duration_hours) is not int or duration_hours not in ALLOWED_PASS_HOURS:
             raise ValueError(
                 "only 24, 72, or 168 hour test passes are allowed"
             )
