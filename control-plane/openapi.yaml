@@ -296,16 +296,26 @@ components:
       properties:
         gateway_id:
           type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
         display_name:
           type: string
+          minLength: 1
+          maxLength: 100
         region:
           type: string
+          minLength: 1
+          maxLength: 80
           description: Coarse service region, not private host location.
         status:
           type: string
           enum: [healthy, degraded, unavailable]
         endpoint:
           type: string
+          maxLength: 300
+          pattern: '^(?:[A-Za-z0-9.-]+:[0-9]{1,5}|\[[0-9A-Fa-f:.]+\]:[0-9]{1,5})$'
+          description: Host and UDP port; IPv6 addresses must be bracketed. Runtime validation checks host and port validity.
         capacity_state:
           type: string
           enum: [available, limited, full]
@@ -324,15 +334,28 @@ components:
       properties:
         gateway_id:
           type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
         display_name:
           type: string
+          minLength: 1
+          maxLength: 100
         region:
           type: string
+          minLength: 1
+          maxLength: 80
         endpoint:
           type: string
+          maxLength: 300
+          pattern: '^(?:[A-Za-z0-9.-]+:[0-9]{1,5}|\[[0-9A-Fa-f:.]+\]:[0-9]{1,5})$'
+          description: Host and UDP port; IPv6 addresses must be bracketed. Runtime validation checks host and port validity.
         server_public_key:
           type: string
-          description: Base64-encoded WireGuard server public key.
+          minLength: 44
+          maxLength: 44
+          pattern: '^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$'
+          description: Canonical Base64-encoded 32-byte WireGuard server public key.
         status:
           type: string
           enum: [healthy, degraded, unavailable]

@@ -32,7 +32,10 @@ def validate_wireguard_public_key(value: str) -> bool:
         raw = base64.b64decode(value, validate=True)
     except (binascii.Error, ValueError):
         return False
-    return len(raw) == 32
+    return (
+        len(raw) == 32
+        and base64.b64encode(raw).decode("ascii") == value
+    )
 
 
 @dataclass(frozen=True)

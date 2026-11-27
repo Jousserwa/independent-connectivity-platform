@@ -7,6 +7,8 @@ from __future__ import annotations
 import secrets
 import hashlib
 import sqlite3
+import ipaddress
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -18,6 +20,57 @@ from entitlements import (
     validate_wireguard_public_key,
 )
 from storage import SQLiteStore
+
+
+def _valid_gateway_endpoint(endpoint: str) -> bool:
+    """Validate a WireGuard host:port endpoint without accepting URLs."""
+    if not isinstance(endpoint, str) or not endpoint or len(endpoint) > 300:
+        return False
+
+    if endpoint.startswith("["):
+        closing = endpoint.find("]")
+        if closing < 0 or endpoint[closing + 1:closing + 2] != ":":
+            return False
+        host = endpoint[1:closing]
+        port = endpoint[closing + 2:]
+        try:
+            if ipaddress.ip_address(host).version != 6:
+                return False
+        except ValueError:
+            return False
+    else:
+        if endpoint.count(":") != 1:
+            return False
+        host, port = endpoint.rsplit(":", 1)
+
+        if not host:
+            return False
+
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            # Do not accept malformed dotted IPv4 addresses as DNS names.
+            if re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}", host):
+                return False
+            if len(host) > 253:
+                return False
+            labels = host.split(".")
+            if not all(
+                1 <= len(label) <= 63
+                and re.fullmatch(
+                    r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?",
+                    label,
+                )
+                for label in labels
+            ):
+                return False
+
+    return (
+        bool(port)
+        and port.isascii()
+        and port.isdecimal()
+        and 1 <= int(port) <= 65535
+    )
 
 
 class PersistentControlPlane:
@@ -91,20 +144,48 @@ class PersistentControlPlane:
         return self.store.get_device(device_id)
 
     def register_gateway(self, gateway: Gateway) -> None:
-        if not gateway.gateway_id or not gateway.endpoint:
-            raise ValueError("gateway id and endpoint are required")
+        if not isinstance(gateway, Gateway):
+            raise ValueError("gateway must be a Gateway record")
 
-        if gateway.status not in {
+        if not isinstance(gateway.gateway_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", gateway.gateway_id
+        ):
+            raise ValueError("invalid gateway id")
+
+        if (
+            not isinstance(gateway.display_name, str)
+            or not gateway.display_name.strip()
+            or len(gateway.display_name) > 100
+        ):
+            raise ValueError("invalid gateway display name")
+
+        if (
+            not isinstance(gateway.region, str)
+            or not gateway.region.strip()
+            or len(gateway.region) > 80
+        ):
+            raise ValueError("invalid gateway region")
+
+        if not _valid_gateway_endpoint(gateway.endpoint):
+            raise ValueError("invalid gateway endpoint")
+
+        if not isinstance(gateway.status, str) or gateway.status not in {
             "healthy", "degraded", "unavailable"
         }:
             raise ValueError("invalid gateway status")
 
-        if gateway.capacity_state not in {
-            "available", "limited", "full"
-        }:
+        if (
+            not isinstance(gateway.capacity_state, str)
+            or gateway.capacity_state not in {
+                "available", "limited", "full"
+            }
+        ):
             raise ValueError("invalid gateway capacity state")
 
-        if not validate_wireguard_public_key(gateway.server_public_key):
+        if (
+            not isinstance(gateway.server_public_key, str)
+            or not validate_wireguard_public_key(gateway.server_public_key)
+        ):
             raise ValueError("invalid gateway public key")
 
         self.store.save_gateway(gateway)

@@ -96,6 +96,122 @@ class PersistentControlPlaneTests(unittest.TestCase):
         found = restarted.eligible_gateways()
         self.assertEqual([g.gateway_id for g in found], ["gw_good"])
 
+    def test_gateway_accepts_valid_endpoint_formats(self):
+        key = make_key(21)
+        endpoints = (
+            "127.0.0.1:51820",
+            "gateway.example.com:51820",
+            "localhost:51820",
+            "[2001:db8::1]:51820",
+        )
+        for index, endpoint in enumerate(endpoints):
+            with self.subTest(endpoint=endpoint):
+                self.control.register_gateway(Gateway(
+                    f"gw_endpoint_{index}", "Test Gateway", "Uganda",
+                    endpoint, key
+                ))
+
+    def test_gateway_rejects_invalid_endpoints(self):
+        key = make_key(22)
+        endpoints = (
+            "",
+            "gateway.example.com",
+            "https://gateway.example.com:51820",
+            "gateway.example.com/path:51820",
+            "gateway.example.com:0",
+            "gateway.example.com:65536",
+            "gateway.example.com:abc",
+            "gateway.example.com:51820:extra",
+            "2001:db8::1:51820",
+            "[2001:db8::1:51820",
+            "[127.0.0.1]:51820",
+            "bad host:51820",
+        )
+        for index, endpoint in enumerate(endpoints):
+            with self.subTest(endpoint=endpoint):
+                with self.assertRaises(ValueError):
+                    self.control.register_gateway(Gateway(
+                        f"gw_invalid_{index}", "Test Gateway", "Uganda",
+                        endpoint, key
+                    ))
+
+    def test_gateway_rejects_invalid_metadata(self):
+        key = make_key(23)
+        invalid_records = (
+            Gateway("bad id!", "Gateway", "Uganda",
+                    "127.0.0.1:51820", key),
+            Gateway("gw_name", "   ", "Uganda",
+                    "127.0.0.1:51820", key),
+            Gateway("gw_region", "Gateway", "",
+                    "127.0.0.1:51820", key),
+            Gateway("gw_long", "x" * 101, "Uganda",
+                    "127.0.0.1:51820", key),
+            Gateway("gw_status_type", "Gateway", "Uganda",
+                    "127.0.0.1:51820", key, status=["healthy"]),
+            Gateway("gw_capacity_type", "Gateway", "Uganda",
+                    "127.0.0.1:51820", key, capacity_state={"state": "full"}),
+            Gateway("gw_bad_ipv4", "Gateway", "Uganda",
+                    "999.999.999.999:51820", key),
+        )
+        for gateway in invalid_records:
+            with self.subTest(gateway_id=gateway.gateway_id):
+                with self.assertRaises(ValueError):
+                    self.control.register_gateway(gateway)
+
+    def test_gateway_identity_cannot_be_silently_replaced(self):
+        key = make_key(24)
+        original = Gateway(
+            "gw_immutable", "Original Gateway", "Uganda",
+            "198.51.100.20:51820", key
+        )
+        self.control.register_gateway(original)
+
+        changed_endpoint = Gateway(
+            "gw_immutable", "Original Gateway", "Uganda",
+            "198.51.100.21:51820", key
+        )
+        with self.assertRaises(ValueError):
+            self.control.register_gateway(changed_endpoint)
+
+        changed_key = Gateway(
+            "gw_immutable", "Original Gateway", "Uganda",
+            "198.51.100.20:51820", make_key(25)
+        )
+        with self.assertRaises(ValueError):
+            self.control.register_gateway(changed_key)
+
+        saved = self.control.eligible_gateways()
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0].endpoint, original.endpoint)
+        self.assertEqual(saved[0].server_public_key, original.server_public_key)
+
+    def test_gateway_metadata_and_health_can_be_updated(self):
+        key = make_key(26)
+        original = Gateway(
+            "gw_update", "Original Name", "Uganda",
+            "198.51.100.30:51820", key
+        )
+        self.control.register_gateway(original)
+
+        updated = Gateway(
+            "gw_update", "Updated Name", "Central Uganda",
+            "198.51.100.30:51820", key,
+            status="degraded", capacity_state="limited"
+        )
+        self.control.register_gateway(updated)
+
+        self.assertEqual(self.control.eligible_gateways(), [])
+
+        restored = Gateway(
+            "gw_update", "Updated Name", "Central Uganda",
+            "198.51.100.30:51820", key,
+            status="healthy", capacity_state="available"
+        )
+        self.control.register_gateway(restored)
+        found = self.control.eligible_gateways()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].display_name, "Updated Name")
+
     def test_only_supported_pass_durations_are_issued(self):
         for hours in (24, 72, 168):
             self.control.issue_test_activation_code(hours)

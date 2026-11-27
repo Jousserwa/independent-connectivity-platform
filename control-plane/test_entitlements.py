@@ -28,6 +28,19 @@ class ControlPlaneRulesTests(unittest.TestCase):
         self.assertFalse(validate_wireguard_public_key("not-a-key"))
         self.assertFalse(validate_wireguard_public_key(base64.b64encode(b"short").decode()))
 
+    def test_public_key_rejects_noncanonical_base64(self):
+        valid = public_key(31)
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        final_index = alphabet.index(valid[-2])
+        self.assertEqual(final_index % 4, 0)
+
+        altered = valid[:-2] + alphabet[final_index + 1] + "="
+        self.assertEqual(
+            base64.b64decode(altered),
+            base64.b64decode(valid),
+        )
+        self.assertFalse(validate_wireguard_public_key(altered))
+
     def test_enrollment_rejects_duplicate_key(self):
         with self.assertRaises(ValueError):
             self.cp.enroll_device(public_key(1))

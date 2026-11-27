@@ -249,20 +249,26 @@ class SQLiteStore:
             return entitlement
 
     def save_gateway(self, gateway: Gateway):
+        """Save gateway metadata without allowing silent identity replacement."""
         with self._connect() as db:
-            db.execute(
+            cursor = db.execute(
                 """INSERT INTO gateways VALUES (?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(gateway_id) DO UPDATE SET
                    display_name=excluded.display_name,
                    region=excluded.region,
-                   endpoint=excluded.endpoint,
-                   server_public_key=excluded.server_public_key,
                    status=excluded.status,
-                   capacity_state=excluded.capacity_state""",
+                   capacity_state=excluded.capacity_state
+                   WHERE gateways.endpoint=excluded.endpoint
+                     AND gateways.server_public_key=excluded.server_public_key""",
                 (gateway.gateway_id, gateway.display_name, gateway.region,
                  gateway.endpoint, gateway.server_public_key,
                  gateway.status, gateway.capacity_state),
             )
+            if cursor.rowcount != 1:
+                raise ValueError(
+                    "gateway identity conflict: endpoint and public key "
+                    "cannot be changed through registration"
+                )
 
     def eligible_gateways(self):
         with self._connect() as db:

@@ -274,6 +274,42 @@ class HTTPAPITests(unittest.TestCase):
                 )
                 self.assertEqual(status, 400)
 
+    def test_admin_gateway_registration_validates_input(self):
+        valid_gateway = {
+            "gateway_id": "gw_http_test",
+            "display_name": "HTTP Test Gateway",
+            "region": "Central Uganda",
+            "endpoint": "198.51.100.40:51820",
+            "server_public_key": PUBLIC_KEY,
+            "status": "healthy",
+            "capacity_state": "available",
+        }
+
+        status, body = self.request(
+            "POST", "/v1/admin/gateways", valid_gateway, ADMIN
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(body["gateway_id"], "gw_http_test")
+
+        invalid_cases = (
+            ("bad endpoint", {"endpoint": "https://gateway.example.com"}),
+            ("bad status type", {"status": ["healthy"]}),
+            ("bad capacity type", {"capacity_state": {"state": "full"}}),
+            ("bad public key", {"server_public_key": "invalid"}),
+        )
+
+        for label, change in invalid_cases:
+            with self.subTest(case=label):
+                payload = dict(valid_gateway)
+                payload["gateway_id"] = "gw_http_" + label.replace(" ", "_")
+                payload.update(change)
+
+                status, body = self.request(
+                    "POST", "/v1/admin/gateways", payload, ADMIN
+                )
+                self.assertEqual(status, 400)
+                self.assertIn("error", body)
+
     def test_admin_code_issuance_and_device_revocation(self):
         self.enroll()
         status, _ = self.request(
